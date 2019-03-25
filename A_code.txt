@@ -1,0 +1,158 @@
+import cv2
+import math
+import cmath
+import warnings
+import numpy as np
+from scipy.fftpack import fft
+import matplotlib.pyplot as plt
+warnings.filterwarnings("ignore")
+
+def dist(i,j,P,Q):
+	return np.linalg.norm((i - P / 2, j - Q / 2))
+
+def l_gaussian(P,Q,D):
+	f = np.zeros((P,Q))
+	for i in range(P):
+		for j in range(Q):
+			f[i, j] = math.e ** (-dist(i,j,P,Q) ** 2 / 2 / D ** 2)
+	return f
+
+def h_gaussian(P,Q,D):
+	f = np.zeros((P,Q))
+	for i in range(P):
+		for j in range(Q):
+			f[i, j] = 1 - math.e ** (-dist(i,j,P,Q) ** 2 / 2 / D ** 2)
+	return f
+
+def l_butterworth(P,Q,D,n):
+	f = np.zeros((P,Q))
+	for i in range(P):
+		for j in range(Q):
+			f[i, j] = 1 / (1 + (dist(i,j,P,Q) / D) ** (2*n))
+	return f
+
+def h_butterworth(P,Q,D,n):
+	f = np.zeros((P,Q))
+	for i in range(P):
+		for j in range(Q):
+			f[i, j] = 1 / (1 + (D / dist(i,j,P,Q)) ** (2*n))
+	return f
+
+def laplace(P,Q):
+	H = np.zeros((P,Q))
+	for i in range(P):
+		for j in range(Q):
+			H[i, j] = -((2 * math.pi * dist(i,j,P,Q)) ** 2)
+	return H
+
+def power_ratio(spectrum,filters):
+	total = np.sum(np.multiply(spectrum,spectrum))
+	processed = np.multiply(spectrum,filters)
+	inner = np.sum(np.multiply(processed, processed))
+	ratio = inner / total
+	print('\nPower Spectral Ratio : '+str(100 * ratio)+'%\n')
+
+def move(m,n):
+	f = np.ones((m,n))
+	for i in range(m):
+		for j in range(n):
+			if (i + j) % 2:
+				f[i, j] = -1
+	return f
+
+def padding(img):
+	m, n = np.shape(img)
+	P, Q = 0, 0
+	while 2 ** P <= m:
+		P += 1
+	while 2 ** Q <= n:
+		Q += 1
+	P, Q = 2 ** P, 2 ** Q
+	p = np.pad(np.multiply(img, move(m,n)), ((0, P - m), (0, Q - n)), 'constant')
+	return p
+
+def fourier_2d(after_padding):
+	P, Q = np.shape(after_padding)
+	phase = np.zeros((P,Q))
+	fourier = np.zeros((P, Q))
+	for i in range(P):
+		fourier[i,:] = fft(after_padding[i,:])
+	for j in range(Q):
+		fourier[:,j] = fft(fourier[:,j])
+	for i in range(P):
+		for j in range(Q):
+			phase[i, j] = cmath.phase(fourier[i, j])
+	spectrum = abs(fourier)
+	return fourier, spectrum, phase
+
+def filtering(fourier, filters):
+	P, Q = np.shape(fourier)
+	processed = np.multiply(fourier, filters)
+	conj = processed.conjugate()
+	for i in range(P):
+		conj[i,:] = fft(conj[i,:])
+	for j in range(Q):
+		conj[:,j] = fft(conj[:,j])
+	re = np.multiply((conj / (P * Q)).real, move(P,Q))
+	return re.astype(int)
+
+def cutting(re,m,n):
+	return re[0:m,0:n] - np.min(re[0:m,0:n])
+
+def normalize(mat,maxval):
+	a = np.max(mat)
+	b = np.min(mat)
+	new = (mat - b) / (a - b) * maxval
+	return new.astype(int)
+
+def unmask(img, blur, k1, k2):
+	blur = normalize(blur, 255)
+	mask = normalize(img - blur, 255)
+	new = (k1 * img + k2 * mask).astype(int)
+	return new, mask
+
+def enhancement(img, edge, k):
+	edge = normalize(edge, 255)
+	edge_enhance = normalize(img + k * edge, 255)
+	return edge_enhance.astype(int)
+
+def draw(names, images, row, col):
+	assert len(names) == len(images), 'dimension mismatch'
+	plt.figure('SHOW')
+	for i in range(len(names)):
+		plt.subplot(row, col, i+1)
+		plt.title(names[i])
+		plt.imshow(images[i], cmap='gray')
+	plt.show()
+
+def read(filename):
+	img = cv2.imread(filename, cv2.IMREAD_GRAYSCALE)
+	return img
+
+
+if __name__ == '__main__':
+	#perform moving while padding
+#	filename = 'test1.pgm'
+#	filename = 'test2.tif'
+#	filename = 'test3.pgm'
+	filename = 'test4.tif'
+	img = read(filename)
+	m, n = np.shape(img)
+	p = padding(img)
+	P, Q = np.shape(p)
+	fourier, spectrum, phase = fourier_2d(p)
+	filters = l_gaussian(P,Q,D = 100)
+#	filters = h_gaussian(P,Q,D = 50)
+#	filters = l_butterworth(P,Q,D = 80, n = 2)
+#	filters = h_butterworth(P,Q,D = 50, n = 2)
+#	filters = laplace(P,Q)
+	power_ratio(spectrum,filters)
+	re = filtering(fourier, filters)
+	re = cutting(re, m, n)
+#	un_mask, mask = unmask(img, re, k1=0.5, k2=0.75)
+#	edge = cutting(re, m, n)
+#	enhance = enhancement(img, edge, k = 1)
+	spectrum = np.log10(spectrum)
+	draw(['Original','Processed','Spectrum(lg)','Phase'],[img,re,spectrum,phase],row=2,col=2)
+#	draw(['Original','Processed','Spectrum(lg)','Phase'],[img,un_mask,spectrum,phase],row=2,col=2)
+#	draw(['Original','Edge','Processed','Spectrum(lg)','Phase'],[img,edge,enhance,spectrum,phase],row=2,col=3)
